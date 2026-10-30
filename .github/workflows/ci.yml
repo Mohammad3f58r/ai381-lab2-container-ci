@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   lint-and-test:
+    name: CI
     runs-on: ubuntu-latest
 
     steps:
