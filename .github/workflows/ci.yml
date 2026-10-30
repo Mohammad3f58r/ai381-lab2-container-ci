@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -34,3 +33,46 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -v
+
+  build-scan-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build Docker image
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Scan image with Trivy
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.70.0 \
+            image --scanners vuln --severity HIGH,CRITICAL \
+            --exit-code 0 "$IMAGE"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+
+      - name: Push image to GHCR
+        run: |
+          docker push "$IMAGE"
+
+      - name: Show image digest
+        run: |
+          docker buildx imagetools inspect "$IMAGE" | tee image-info.txt
+          DIGEST=$(awk '/^Digest:/ {print $2; exit}' image-info.txt)
+          echo "Image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
